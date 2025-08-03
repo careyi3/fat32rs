@@ -1,0 +1,17 @@
+[package]
+name = "fat32rs"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+opt-level = 3
+
+[lib]
+name = "fat32rs"
+path = "src/hello.rs"
+
+[[example]]
+name = "read_files"
+path = "examples/read_files.rs"
+
+[dependencies]
