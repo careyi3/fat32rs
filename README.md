@@ -8,6 +8,8 @@ Based on this original Python prototype: [fat32py](https://github.com/careyi3/fa
 
 **The following instructions assumes a Linux or Mac environment*
 
+![Test](https://github.com/careyi3/fat32py/actions/workflows/test.yml/badge.svg)
+
 ## Features
 
 The only features implemented are:
