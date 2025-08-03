@@ -1,6 +1,6 @@
 # fat32rs
 
-Minimal FAT32 Client written in #[no_std] Rust
+WIP Minimal FAT32 Client written in #[no_std] Rust
 
 This is library was designed to operate within some specific constraints imposed by running in an embedded systems environment.
 
