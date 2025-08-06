@@ -8,10 +8,11 @@ opt-level = 3
 
 [lib]
 name = "fat32rs"
-path = "src/hello.rs"
+path = "src/lib.rs"
 
 [[example]]
 name = "read_files"
 path = "examples/read_files.rs"
 
-[dependencies]
+[dev-dependencies]
+tempfile = "3.2.0"

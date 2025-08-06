@@ -1,11 +1,10 @@
-#[path = "../tests/test_helpers.rs"]
 mod test_helpers;
 
 use test_helpers::disk;
 
-fn main() -> std::io::Result<()> {
+#[test]
+fn it_runs() {
     let mut disk = disk();
-
     let data = [42u8; 512];
     disk.write_file_block(0, data).unwrap();
 
@@ -14,6 +13,5 @@ fn main() -> std::io::Result<()> {
 
     let files = disk.list_files().unwrap();
     println!("Files on disk: {:?}", files);
-
-    Ok(())
+    assert_eq!(block, data);
 }
