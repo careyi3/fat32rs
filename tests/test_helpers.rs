@@ -16,9 +16,9 @@ impl FileBackedDevice {
 }
 
 impl BlockIO for FileBackedDevice {
-    fn read_block(&mut self, block_index: u64) -> Result<[u8; 512]> {
+    fn read_block(&mut self, byte_offset: u64) -> Result<[u8; 512]> {
         self.file
-            .seek(SeekFrom::Start(block_index * 512))
+            .seek(SeekFrom::Start(byte_offset))
             .map_err(|_| IOError::ReadError)?;
 
         let mut buf = [0u8; 512];
@@ -28,9 +28,9 @@ impl BlockIO for FileBackedDevice {
         Ok(buf)
     }
 
-    fn write_block(&mut self, block_index: u64, data: [u8; 512]) -> Result<()> {
+    fn write_block(&mut self, byte_offset: u64, data: [u8; 512]) -> Result<()> {
         self.file
-            .seek(SeekFrom::Start(block_index * 512))
+            .seek(SeekFrom::Start(byte_offset))
             .map_err(|_| IOError::WriteError)?;
         self.file
             .write_all(&data)

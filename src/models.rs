@@ -1,11 +1,13 @@
+const PARTITION_BLOCK_SIZE: u32 = 512;
+
 #[derive(Default, Clone, Copy)]
 pub struct Partition {
-    boot_flag: u8,
-    start_chs: [u8; 3],
-    part_type: u8,
-    end_chs: [u8; 3],
-    start_lba: u32,
-    num_sectors: u32,
+    pub boot_flag: u8,
+    pub start_chs: [u8; 3],
+    pub part_type: u8,
+    pub end_chs: [u8; 3],
+    pub start_lba: u32,
+    pub num_sectors: u32,
 }
 
 impl Partition {
@@ -36,5 +38,65 @@ impl Partition {
             partitions[i] = partition;
         }
         return partitions;
+    }
+
+    pub fn get_partition_offset(&self) -> u64 {
+        let partition_sector_offset = self.start_lba;
+        let partition_offset = partition_sector_offset * PARTITION_BLOCK_SIZE;
+        partition_offset as u64
+    }
+}
+
+pub struct BiosParameterBlock {
+    pub bytes_per_sector: u16,
+    pub sectors_per_cluster: u8,
+    pub reserved_sector_count: u16,
+    pub num_fats: u8,
+    pub total_sectors_16: u16,
+    pub total_sectors_32: u32,
+    pub fat_size_16: u16,
+    pub fat_size_32: u32,
+    pub root_cluster: u32,
+    pub fs_info_sector: u16,
+    pub backup_boot_sector: u16,
+    pub fat_size: u32,
+    pub total_sectors: u32,
+    pub fat_start_sector: u16,
+    pub data_start_sector: u32,
+    pub root_dir_first_sector: u32,
+}
+
+impl BiosParameterBlock {
+    pub fn from_bytes(bytes: [u8; 512]) -> Self {
+        let bytes_per_sector = u16::from_le_bytes([bytes[11], bytes[12]]);
+        let sectors_per_cluster = bytes[13];
+        let reserved_sector_count = u16::from_le_bytes([bytes[14], bytes[15]]);
+        let num_fats = bytes[16];
+        let total_sectors_16 = u16::from_le_bytes([bytes[19], bytes[20]]);
+        let total_sectors_32 = u32::from_le_bytes([bytes[32], bytes[33], bytes[34], bytes[35]]);
+        let fat_size_16 = u16::from_le_bytes([bytes[22], bytes[23]]);
+        let fat_size_32 = u32::from_le_bytes([bytes[36], bytes[37], bytes[38], bytes[39]]);
+        let root_cluster = u32::from_le_bytes([bytes[44], bytes[45], bytes[46], bytes[47]]);
+        let fs_info_sector = u16::from_le_bytes([bytes[48], bytes[49]]);
+        let backup_boot_sector = u16::from_le_bytes([bytes[50], bytes[51]]);
+
+        Self {
+            bytes_per_sector,
+            sectors_per_cluster,
+            reserved_sector_count,
+            num_fats,
+            total_sectors_16,
+            total_sectors_32,
+            fat_size_16,
+            fat_size_32,
+            root_cluster,
+            fs_info_sector,
+            backup_boot_sector,
+            fat_size: fat_size_32,
+            total_sectors: total_sectors_32,
+            fat_start_sector: reserved_sector_count,
+            data_start_sector: reserved_sector_count as u32 + (num_fats as u32 * fat_size_32),
+            root_dir_first_sector: root_cluster,
+        }
     }
 }
