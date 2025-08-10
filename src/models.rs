@@ -8,6 +8,7 @@ pub struct Partition {
     pub end_chs: [u8; 3],
     pub start_lba: u32,
     pub num_sectors: u32,
+    pub byte_offset: u64,
 }
 
 impl Partition {
@@ -27,6 +28,8 @@ impl Partition {
                 .try_into()
                 .unwrap();
             let num_sectors: u32 = u32::from_le_bytes(num_sectors_arr);
+            let partition_sector_offset = start_lba;
+            let byte_offset = (partition_sector_offset * PARTITION_BLOCK_SIZE) as u64;
             let partition = Partition {
                 boot_flag,
                 start_chs,
@@ -34,16 +37,11 @@ impl Partition {
                 end_chs,
                 start_lba,
                 num_sectors,
+                byte_offset,
             };
             partitions[i] = partition;
         }
         return partitions;
-    }
-
-    pub fn get_partition_offset(&self) -> u64 {
-        let partition_sector_offset = self.start_lba;
-        let partition_offset = partition_sector_offset * PARTITION_BLOCK_SIZE;
-        partition_offset as u64
     }
 }
 
@@ -59,11 +57,9 @@ pub struct BiosParameterBlock {
     pub root_cluster: u32,
     pub fs_info_sector: u16,
     pub backup_boot_sector: u16,
-    pub fat_size: u32,
-    pub total_sectors: u32,
-    pub fat_start_sector: u16,
     pub data_start_sector: u32,
-    pub root_dir_first_sector: u32,
+    pub data_sector_bytes_offset: u32,
+    pub bytes_per_cluster: u32,
 }
 
 impl BiosParameterBlock {
@@ -80,6 +76,10 @@ impl BiosParameterBlock {
         let fs_info_sector = u16::from_le_bytes([bytes[48], bytes[49]]);
         let backup_boot_sector = u16::from_le_bytes([bytes[50], bytes[51]]);
 
+        let data_start_sector = reserved_sector_count as u32 + (num_fats as u32 * fat_size_32);
+        let data_sector_bytes_offset = data_start_sector * bytes_per_sector as u32;
+        let bytes_per_cluster = bytes_per_sector as u32 * sectors_per_cluster as u32;
+
         Self {
             bytes_per_sector,
             sectors_per_cluster,
@@ -92,11 +92,18 @@ impl BiosParameterBlock {
             root_cluster,
             fs_info_sector,
             backup_boot_sector,
-            fat_size: fat_size_32,
-            total_sectors: total_sectors_32,
-            fat_start_sector: reserved_sector_count,
-            data_start_sector: reserved_sector_count as u32 + (num_fats as u32 * fat_size_32),
-            root_dir_first_sector: root_cluster,
+            data_start_sector,
+            data_sector_bytes_offset,
+            bytes_per_cluster,
         }
     }
+}
+
+pub struct File<'a> {
+    pub name: &'a str,
+    pub attributes: u8,
+    pub start_cluster: u16,
+    pub size: u32,
+    pub is_lfn: bool,
+    pub byte_offset: u32,
 }

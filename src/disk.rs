@@ -18,6 +18,8 @@ pub struct Disk<T: BlockIO> {
     pub partitions: [Partition; 4],
     pub partition: Option<Partition>,
     pub bios_parameter_block: Option<BiosParameterBlock>,
+    pub reads: u32,
+    pub writes: u32,
 }
 
 impl<T: BlockIO> Disk<T> {
@@ -27,28 +29,36 @@ impl<T: BlockIO> Disk<T> {
             partitions: Default::default(),
             partition: None,
             bios_parameter_block: None,
+            reads: 0,
+            writes: 0,
         }
     }
 
     pub fn read_file_block(&mut self, byte_offset: u64) -> Result<[u8; 512]> {
+        self.reads += 1;
         self.io.read_block(byte_offset)
     }
 
     pub fn write_file_block(&mut self, byte_offset: u64, data: [u8; 512]) -> Result<()> {
+        self.writes += 1;
         self.io.write_block(byte_offset, data)
     }
 
-    pub fn list_files(&self) -> Result<&'static [&'static str]> {
+    pub fn list_files(&mut self) -> Result<&'static [&'static str]> {
+        self.reads = 0;
+        self.writes = 0;
         static FILES: [&str; 2] = ["file1.txt", "file2.txt"];
         Ok(&FILES)
     }
 
     pub fn init(&mut self) -> Result<()> {
+        self.reads = 0;
+        self.writes = 0;
         let partition_data = self.read_file_block(0)?;
         self.partitions = Partition::from_bytes(partition_data);
         self.partition = first_largest_non_zero_partition(&self.partitions);
 
-        let offset = self.partition.unwrap().get_partition_offset();
+        let offset = self.partition.unwrap().byte_offset;
         let bios_parameter_block_data = self.read_file_block(offset)?;
         self.bios_parameter_block = Some(BiosParameterBlock::from_bytes(bios_parameter_block_data));
         Ok(())

@@ -48,11 +48,9 @@ fn setup_temp_disk() -> NamedTempFile {
 
     let mut temp_file = NamedTempFile::new().expect("Could not create temp file");
 
-    // Copy contents
     std::io::copy(&mut fixture_file, temp_file.as_file_mut())
         .expect("Failed to copy fixture to temp file");
 
-    // Optionally seek back to the start (if needed)
     temp_file.as_file_mut().seek(SeekFrom::Start(0)).unwrap();
 
     return temp_file;
