@@ -2,6 +2,8 @@ mod test_helpers;
 
 use test_helpers::disk;
 
+use fat32rs::models::File;
+
 #[test]
 fn it_reads_and_writes_to_disk() {
     let mut disk = disk();
@@ -11,8 +13,6 @@ fn it_reads_and_writes_to_disk() {
     let block = disk.read_file_block(0).unwrap();
     println!("Read block starts with: {:?}", &block[..8]);
 
-    let files = disk.list_files().unwrap();
-    println!("Files on disk: {:?}", files);
     assert_eq!(block, data);
 }
 
@@ -20,6 +20,10 @@ fn it_reads_and_writes_to_disk() {
 fn it_inits() {
     let mut disk = disk();
     disk.init().unwrap();
+
+    assert_eq!(disk.reads, 2);
+    assert_eq!(disk.writes, 0);
+
     let partitions = disk.partitions;
     assert_eq!(partitions.len(), 4);
 
@@ -82,4 +86,85 @@ fn it_inits() {
     assert_eq!(bios_parameter_block.data_start_sector, 2048);
     assert_eq!(bios_parameter_block.bytes_per_cluster, 512);
     assert_eq!(bios_parameter_block.data_sector_bytes_offset, 1048576);
+    assert_eq!(bios_parameter_block.fat_table_byte_offset, 16384);
+}
+
+#[test]
+fn it_lists_the_root_files() {
+    let mut disk = disk();
+    disk.init().unwrap();
+    let filelist = disk.list_root_files();
+    let mut count = 0;
+    let mut count_non_empty = 0;
+    for files in filelist {
+        for file in files {
+            count += 1;
+            if file.name != [0; 11] {
+                count_non_empty += 1;
+            }
+        }
+    }
+    assert_eq!(disk.reads, 4);
+    assert_eq!(disk.writes, 0);
+    assert_eq!(count, 16);
+    assert_eq!(count_non_empty, 9);
+}
+
+#[test]
+fn it_reads_files_in_chunks() {
+    let mut disk = disk();
+    disk.init().unwrap();
+    let filelist = disk.list_root_files();
+    let mut to_read: File = File::default();
+    for files in filelist {
+        for file in files {
+            if std::str::from_utf8(&file.name).unwrap().trim() == "LOG-1" {
+                to_read = file;
+            }
+        }
+    }
+    assert_eq!(disk.reads, 4);
+    assert_eq!(disk.writes, 0);
+
+    let mut content = String::new();
+    for chunk in disk.read_file_in_chunks(to_read) {
+        content += std::str::from_utf8(&chunk.0[..(to_read.size % 512) as usize]).unwrap();
+    }
+    assert_eq!(disk.reads, 6);
+    assert_eq!(disk.writes, 0);
+
+    assert_eq!(content, "log line 1\n");
+}
+
+#[test]
+fn it_reads_larger_files_in_chunks() {
+    let mut disk = disk();
+    disk.init().unwrap();
+    let filelist = disk.list_root_files();
+    let mut to_read: File = File::default();
+    for files in filelist {
+        for file in files {
+            if std::str::from_utf8(&file.name).unwrap().trim() == "LOG-2" {
+                to_read = file;
+            }
+        }
+    }
+    assert_eq!(disk.reads, 4);
+    assert_eq!(disk.writes, 0);
+
+    let mut content = String::new();
+    let mut read = 0;
+    for chunk in disk.read_file_in_chunks(to_read) {
+        read += 512;
+        if read > to_read.size {
+            content += std::str::from_utf8(&chunk.0[..(to_read.size % 512) as usize]).unwrap();
+        } else {
+            content += std::str::from_utf8(&chunk.0).unwrap();
+        }
+    }
+    assert_eq!(disk.reads, 208);
+    assert_eq!(disk.writes, 0);
+
+    assert_eq!(content.len(), 52117);
+    assert_eq!(to_read.size, 52117);
 }

@@ -1,4 +1,4 @@
-const PARTITION_BLOCK_SIZE: u32 = 512;
+const PARTITION_BLOCK_SIZE: u64 = 512;
 
 #[derive(Default, Clone, Copy)]
 pub struct Partition {
@@ -6,8 +6,8 @@ pub struct Partition {
     pub start_chs: [u8; 3],
     pub part_type: u8,
     pub end_chs: [u8; 3],
-    pub start_lba: u32,
-    pub num_sectors: u32,
+    pub start_lba: u64,
+    pub num_sectors: u64,
     pub byte_offset: u64,
 }
 
@@ -23,13 +23,13 @@ impl Partition {
             let end_chs: [u8; 3] = bytes[(start_idx + 5)..(start_idx + 8)].try_into().unwrap();
             let start_lba_arr: [u8; 4] =
                 bytes[(start_idx + 8)..(start_idx + 12)].try_into().unwrap();
-            let start_lba: u32 = u32::from_le_bytes(start_lba_arr);
+            let start_lba: u64 = u32::from_le_bytes(start_lba_arr) as u64;
             let num_sectors_arr: [u8; 4] = bytes[(start_idx + 12)..(start_idx + 16)]
                 .try_into()
                 .unwrap();
-            let num_sectors: u32 = u32::from_le_bytes(num_sectors_arr);
+            let num_sectors: u64 = u32::from_le_bytes(num_sectors_arr) as u64;
             let partition_sector_offset = start_lba;
-            let byte_offset = (partition_sector_offset * PARTITION_BLOCK_SIZE) as u64;
+            let byte_offset = partition_sector_offset * PARTITION_BLOCK_SIZE;
             let partition = Partition {
                 boot_flag,
                 start_chs,
@@ -46,39 +46,43 @@ impl Partition {
 }
 
 pub struct BiosParameterBlock {
-    pub bytes_per_sector: u16,
-    pub sectors_per_cluster: u8,
-    pub reserved_sector_count: u16,
-    pub num_fats: u8,
-    pub total_sectors_16: u16,
-    pub total_sectors_32: u32,
-    pub fat_size_16: u16,
-    pub fat_size_32: u32,
-    pub root_cluster: u32,
-    pub fs_info_sector: u16,
-    pub backup_boot_sector: u16,
-    pub data_start_sector: u32,
-    pub data_sector_bytes_offset: u32,
-    pub bytes_per_cluster: u32,
+    pub bytes_per_sector: u64,
+    pub sectors_per_cluster: u64,
+    pub reserved_sector_count: u64,
+    pub num_fats: u64,
+    pub total_sectors_16: u64,
+    pub total_sectors_32: u64,
+    pub fat_size_16: u64,
+    pub fat_size_32: u64,
+    pub root_cluster: u64,
+    pub fs_info_sector: u64,
+    pub backup_boot_sector: u64,
+    pub data_start_sector: u64,
+    pub data_sector_bytes_offset: u64,
+    pub bytes_per_cluster: u64,
+    pub fat_table_byte_offset: u64,
 }
 
 impl BiosParameterBlock {
     pub fn from_bytes(bytes: [u8; 512]) -> Self {
-        let bytes_per_sector = u16::from_le_bytes([bytes[11], bytes[12]]);
-        let sectors_per_cluster = bytes[13];
-        let reserved_sector_count = u16::from_le_bytes([bytes[14], bytes[15]]);
-        let num_fats = bytes[16];
-        let total_sectors_16 = u16::from_le_bytes([bytes[19], bytes[20]]);
-        let total_sectors_32 = u32::from_le_bytes([bytes[32], bytes[33], bytes[34], bytes[35]]);
-        let fat_size_16 = u16::from_le_bytes([bytes[22], bytes[23]]);
-        let fat_size_32 = u32::from_le_bytes([bytes[36], bytes[37], bytes[38], bytes[39]]);
-        let root_cluster = u32::from_le_bytes([bytes[44], bytes[45], bytes[46], bytes[47]]);
-        let fs_info_sector = u16::from_le_bytes([bytes[48], bytes[49]]);
-        let backup_boot_sector = u16::from_le_bytes([bytes[50], bytes[51]]);
+        let bytes_per_sector = u16::from_le_bytes([bytes[11], bytes[12]]) as u64;
+        let sectors_per_cluster = bytes[13] as u64;
+        let reserved_sector_count = u16::from_le_bytes([bytes[14], bytes[15]]) as u64;
+        let num_fats = bytes[16] as u64;
+        let total_sectors_16 = u16::from_le_bytes([bytes[19], bytes[20]]) as u64;
+        let total_sectors_32 =
+            u32::from_le_bytes([bytes[32], bytes[33], bytes[34], bytes[35]]) as u64;
+        let fat_size_16 = u16::from_le_bytes([bytes[22], bytes[23]]) as u64;
+        let fat_size_32 = u32::from_le_bytes([bytes[36], bytes[37], bytes[38], bytes[39]]) as u64;
+        let root_cluster = u32::from_le_bytes([bytes[44], bytes[45], bytes[46], bytes[47]]) as u64;
+        let fs_info_sector = u16::from_le_bytes([bytes[48], bytes[49]]) as u64;
+        let backup_boot_sector = u16::from_le_bytes([bytes[50], bytes[51]]) as u64;
 
-        let data_start_sector = reserved_sector_count as u32 + (num_fats as u32 * fat_size_32);
-        let data_sector_bytes_offset = data_start_sector * bytes_per_sector as u32;
-        let bytes_per_cluster = bytes_per_sector as u32 * sectors_per_cluster as u32;
+        let data_start_sector = reserved_sector_count + (num_fats * fat_size_32);
+        let data_sector_bytes_offset = data_start_sector * bytes_per_sector;
+        let bytes_per_cluster = bytes_per_sector * sectors_per_cluster;
+
+        let fat_table_byte_offset = (reserved_sector_count * bytes_per_sector) as u64;
 
         Self {
             bytes_per_sector,
@@ -95,15 +99,41 @@ impl BiosParameterBlock {
             data_start_sector,
             data_sector_bytes_offset,
             bytes_per_cluster,
+            fat_table_byte_offset,
         }
     }
 }
 
-pub struct File<'a> {
-    pub name: &'a str,
+#[derive(Default, Clone, Copy)]
+pub struct File {
+    pub name: [u8; 11],
     pub attributes: u8,
-    pub start_cluster: u16,
-    pub size: u32,
+    pub start_cluster: u64,
+    pub size: u64,
     pub is_lfn: bool,
-    pub byte_offset: u32,
+    pub byte_offset: u64,
+}
+
+impl File {
+    pub fn from_bytes<'a>(bytes: [u8; 512], sector_offset: u64) -> [File; 16] {
+        let mut files = [File::default(); 16];
+
+        for i in 0..16 {
+            let start = i * 32;
+            let end = start + 32;
+            let file_bytes = &bytes[start..end];
+            let mut name = [0u8; 11];
+            name.copy_from_slice(&file_bytes[0..11]);
+            files[i] = File {
+                name,
+                attributes: file_bytes[11],
+                start_cluster: u16::from_le_bytes(file_bytes[26..28].try_into().unwrap()) as u64,
+                size: u32::from_le_bytes(file_bytes[28..32].try_into().unwrap()) as u64,
+                is_lfn: false,
+                byte_offset: sector_offset + (i as u64 * 32),
+            };
+        }
+
+        files
+    }
 }
