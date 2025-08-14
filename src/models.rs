@@ -152,4 +152,15 @@ impl File {
 
         bytes
     }
+
+    pub fn new(name: [u8; 11], start_cluster: u64, size: u64) -> Self {
+        Self {
+            name,
+            attributes: 32,
+            start_cluster: start_cluster,
+            size: size,
+            is_lfn: false,
+            byte_offset: 0,
+        }
+    }
 }

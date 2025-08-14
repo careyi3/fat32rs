@@ -102,14 +102,7 @@ impl<'a, T: BlockIO> Iterator for FileList<'a, T> {
 
 fn make_file_list<T: BlockIO>(disk: &mut Disk<T>) -> FileList<T> {
     let root_dir_first_cluster = disk.bios_parameter_block.as_ref().unwrap().root_cluster;
-    let file = File {
-        name: [0; 11],
-        attributes: 0x20,
-        start_cluster: root_dir_first_cluster,
-        size: MAX_FILE_SIZE,
-        is_lfn: false,
-        byte_offset: 0,
-    };
+    let file = File::new([0; 11], root_dir_first_cluster, MAX_FILE_SIZE);
     let file_pointer = make_file_pointer(file, disk);
     FileList { file_pointer }
 }
@@ -368,6 +361,64 @@ impl<T: BlockIO> Disk<T> {
         }
     }
 
+    fn allocate_first_free_cluster(&mut self) -> Result<u64> {
+        let (data, sector_num, idx) = self.find_next_empty_fat_entry(2);
+        let entry: [u8; 4] = ((0x0FFFFFF8 & 0x0FFFFFFF) as u32).to_le_bytes();
+        self.write_fat_entry(data, sector_num, idx, entry)?;
+        Ok(((sector_num * LOGICAL_BLOCK_SIZE) + idx) / 4)
+    }
+
+    fn get_root_file_size(&mut self, file: File) -> Result<u64> {
+        let mut size = 0;
+        'outer: for (block, _) in make_file_pointer(file, self) {
+            for pointer in block.chunks(32) {
+                if *pointer.first().unwrap() == 0u8 {
+                    break 'outer;
+                }
+                size += 32;
+            }
+        }
+        Ok(size)
+    }
+
+    fn create_file_with_name(&mut self, name: [u8; 11]) -> Result<File> {
+        let start_cluster = self.allocate_first_free_cluster()?;
+        let data_sector_bytes_offset = self
+            .bios_parameter_block
+            .as_ref()
+            .unwrap()
+            .data_sector_bytes_offset;
+
+        let mut file = File::new(name, start_cluster, 0);
+        let file_bytes = file.to_bytes();
+        let mut to_write = [0u8; 33];
+        to_write[..32].copy_from_slice(&file_bytes);
+
+        let root_dir_first_cluster = self.bios_parameter_block.as_ref().unwrap().root_cluster;
+
+        let mut root_file = File::new([0; 11], root_dir_first_cluster, MAX_FILE_SIZE);
+        let actual_root_file_size = self.get_root_file_size(root_file)?;
+        root_file.size = actual_root_file_size;
+
+        let root_dir_last_cluster = self.get_files_last_cluster(&root_file);
+        let root_file =
+            self.append_to_file_with_update_file_size(&mut root_file, &to_write, false)?;
+
+        let root_dir_first_cluster = self.bios_parameter_block.as_ref().unwrap().root_cluster;
+        let bytes_per_cluster = self
+            .bios_parameter_block
+            .as_ref()
+            .unwrap()
+            .bytes_per_cluster;
+        let offset = data_sector_bytes_offset
+            + ((root_dir_last_cluster - root_dir_first_cluster) * bytes_per_cluster);
+        let byte_offset = offset + ((root_file.size - 33) % bytes_per_cluster);
+
+        file.byte_offset = byte_offset;
+
+        Ok(file)
+    }
+
     pub fn init(&mut self) -> Result<()> {
         self.reads = 0;
         self.writes = 0;
@@ -397,6 +448,12 @@ impl<T: BlockIO> Disk<T> {
         self.reads = 0;
         self.writes = 0;
         self.append_to_file_with_update_file_size(file, data, true)
+    }
+
+    pub fn create_file(&mut self, name: [u8; 11]) -> Result<File> {
+        self.reads = 0;
+        self.writes = 0;
+        self.create_file_with_name(name)
     }
 }
 

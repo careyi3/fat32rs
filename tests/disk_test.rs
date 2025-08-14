@@ -272,3 +272,38 @@ fn it_can_append_lots_of_data_to_file() {
     assert_eq!(content, expected_content);
     assert_eq!(to_test.size, 1011);
 }
+
+#[test]
+fn it_can_create_a_new_file() {
+    let mut disk = disk();
+    disk.init().unwrap();
+
+    let name = pad_or_truncate_to_11_bytes("new file");
+
+    disk.create_file(name).unwrap();
+
+    let filelist = disk.list_root_files();
+    let mut to_test: File = File::default();
+    for files in filelist {
+        for file in files {
+            if std::str::from_utf8(&file.name).is_ok()
+                && std::str::from_utf8(&file.name).unwrap().trim() == "new file"
+            {
+                to_test = file;
+            }
+        }
+    }
+
+    assert_eq!(
+        std::str::from_utf8(&to_test.name).unwrap().trim(),
+        "new file"
+    );
+}
+
+fn pad_or_truncate_to_11_bytes(input: &str) -> [u8; 11] {
+    let mut result = [b' '; 11];
+    let bytes = input.as_bytes();
+    let len = core::cmp::min(bytes.len(), 8);
+    result[..len].copy_from_slice(&bytes[..len]);
+    result
+}
