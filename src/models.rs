@@ -115,7 +115,7 @@ pub struct File {
 }
 
 impl File {
-    pub fn from_bytes<'a>(bytes: [u8; 512], sector_offset: u64) -> [File; 16] {
+    pub fn from_bytes(bytes: [u8; 512], sector_offset: u64) -> [File; 16] {
         let mut files = [File::default(); 16];
 
         for i in 0..16 {
@@ -135,5 +135,21 @@ impl File {
         }
 
         files
+    }
+
+    pub fn to_bytes(self) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+
+        bytes[0..11].copy_from_slice(&self.name);
+
+        bytes[11] = self.attributes;
+
+        let cluster_bytes = (self.start_cluster as u16).to_le_bytes();
+        bytes[26..28].copy_from_slice(&cluster_bytes);
+
+        let size_bytes = (self.size as u32).to_le_bytes();
+        bytes[28..32].copy_from_slice(&size_bytes);
+
+        bytes
     }
 }

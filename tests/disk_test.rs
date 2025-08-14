@@ -183,16 +183,92 @@ fn it_can_append_to_file() {
 
     assert_eq!(content, "log line 1\n");
 
-    let updated_file = disk.append_to_file(&mut to_test, b"new data").unwrap();
-    assert_eq!(disk.reads, 2);
-    assert_eq!(disk.writes, 1);
+    disk.append_to_file(&mut to_test, b"new data").unwrap();
+    assert_eq!(disk.reads, 3);
+    assert_eq!(disk.writes, 2);
+
+    let filelist = disk.list_root_files();
+    let mut to_test: File = File::default();
+    for files in filelist {
+        for file in files {
+            if std::str::from_utf8(&file.name).unwrap().trim() == "LOG-1" {
+                to_test = file;
+            }
+        }
+    }
 
     let mut content = String::new();
-    for chunk in disk.read_file_in_chunks(updated_file) {
-        content += std::str::from_utf8(&chunk.0[..(updated_file.size % 512) as usize]).unwrap();
+    for chunk in disk.read_file_in_chunks(to_test) {
+        content += std::str::from_utf8(&chunk.0[..(to_test.size % 512) as usize]).unwrap();
     }
     assert_eq!(disk.reads, 2);
     assert_eq!(disk.writes, 0);
 
     assert_eq!(content, "log line 1\nnew data");
+    assert_eq!(to_test.size, 19);
+}
+
+#[test]
+fn it_can_append_lots_of_data_to_file() {
+    let mut disk = disk();
+    disk.init().unwrap();
+
+    let filelist = disk.list_root_files();
+    let mut to_test: File = File::default();
+    for files in filelist {
+        for file in files {
+            if std::str::from_utf8(&file.name).unwrap().trim() == "LOG-1" {
+                to_test = file;
+            }
+        }
+    }
+    assert_eq!(disk.reads, 2);
+    assert_eq!(disk.writes, 0);
+
+    let mut content = String::new();
+    for chunk in disk.read_file_in_chunks(to_test) {
+        content += std::str::from_utf8(&chunk.0[..(to_test.size % 512) as usize]).unwrap();
+    }
+    assert_eq!(disk.reads, 2);
+    assert_eq!(disk.writes, 0);
+
+    assert_eq!(content, "log line 1\n");
+
+    let mut random_data = Vec::with_capacity(1000);
+    for i in 0..1000 {
+        let ascii_char = (32 + (i % 95)) as u8;
+        random_data.push(ascii_char);
+    }
+    let expected_appended_data = String::from_utf8(random_data.clone()).unwrap();
+
+    disk.append_to_file(&mut to_test, &random_data).unwrap();
+    assert_eq!(disk.reads, 11);
+    assert_eq!(disk.writes, 6);
+
+    let filelist = disk.list_root_files();
+    let mut to_test: File = File::default();
+    for files in filelist {
+        for file in files {
+            if std::str::from_utf8(&file.name).unwrap().trim() == "LOG-1" {
+                to_test = file;
+            }
+        }
+    }
+
+    let mut content = String::new();
+    let mut read = 0;
+    for chunk in disk.read_file_in_chunks(to_test) {
+        read += 512;
+        if read > to_test.size {
+            content += std::str::from_utf8(&chunk.0[..(to_test.size % 512) as usize]).unwrap();
+        } else {
+            content += std::str::from_utf8(&chunk.0).unwrap();
+        }
+    }
+    assert_eq!(disk.reads, 4);
+    assert_eq!(disk.writes, 0);
+
+    let expected_content = format!("log line 1\n{}", expected_appended_data);
+    assert_eq!(content, expected_content);
+    assert_eq!(to_test.size, 1011);
 }

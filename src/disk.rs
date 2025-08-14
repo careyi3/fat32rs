@@ -322,23 +322,47 @@ impl<T: BlockIO> Disk<T> {
         Ok(())
     }
 
+    fn update_file_record_size(&mut self, file: File) -> File {
+        let partition_offset = self.partition.unwrap().byte_offset;
+        let sector_offset = file.byte_offset / LOGICAL_BLOCK_SIZE;
+        let sector_idx = file.byte_offset % LOGICAL_BLOCK_SIZE;
+
+        let mut block = self
+            .read_file_block(partition_offset + (sector_offset * LOGICAL_BLOCK_SIZE))
+            .unwrap();
+
+        let file_bytes = file.to_bytes();
+
+        block[sector_idx as usize..(sector_idx as usize + file_bytes.len())]
+            .copy_from_slice(&file_bytes);
+
+        self.write_file_block(
+            partition_offset + (sector_offset * LOGICAL_BLOCK_SIZE),
+            block,
+        )
+        .unwrap();
+
+        return file;
+    }
+
     fn append_to_file_with_update_file_size(
         &mut self,
         file: &mut File,
         data: &[u8],
         update_file_size: bool,
     ) -> Result<File> {
+        let original_file_size = file.size;
         let mut written: u64 = 0;
         while written < (data.len() - 1) as u64 {
             self.write_to_last_cluster(file, data, &mut written)?;
-            file.size += written;
+            file.size = original_file_size + written;
             if written < (data.len() - 1) as u64 {
                 let last_cluster = self.get_files_last_cluster(file);
                 self.allocate_next_free_cluster(last_cluster)?;
             }
         }
         if update_file_size {
-            Ok(*file) // TODO: Implement actual file size update logic.
+            Ok(self.update_file_record_size(*file))
         } else {
             Ok(*file)
         }
