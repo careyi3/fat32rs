@@ -45,6 +45,7 @@ impl Partition {
     }
 }
 
+#[derive(Default, Clone, Copy)]
 pub struct BiosParameterBlock {
     pub bytes_per_sector: u64,
     pub sectors_per_cluster: u64,

@@ -1,14 +1,16 @@
 use crate::models::{BiosParameterBlock, File, Partition};
 
-pub type Result<T> = core::result::Result<T, IOError>;
+pub type Result<T> = core::result::Result<T, Error>;
 
 const LOGICAL_BLOCK_SIZE: u64 = 512;
 const MAX_FILE_SIZE: u64 = 4294967296;
 
 #[derive(Debug, Clone, Copy)]
-pub enum IOError {
+pub enum Error {
     ReadError,
     WriteError,
+    SliceError,
+    NotInitalisedError,
 }
 
 pub trait BlockIO {
@@ -34,10 +36,10 @@ pub struct FilePointer<'a, T: BlockIO> {
 }
 
 impl<'a, T: BlockIO> Iterator for FilePointer<'a, T> {
-    type Item = ([u8; 512], u64);
+    type Item = Result<([u8; 512], u64)>;
     fn next(&mut self) -> Option<Self::Item> {
         let partition_offset = self.disk.partition.unwrap().byte_offset;
-        let bios_parameter_block = self.disk.bios_parameter_block.as_ref().unwrap();
+        let bios_parameter_block = self.disk.bios_parameter_block.unwrap();
         let data_sector_byte_offset = bios_parameter_block.data_sector_bytes_offset;
         let bytes_per_cluster = bios_parameter_block.bytes_per_cluster;
         let root_dir_first_cluster = bios_parameter_block.root_cluster;
@@ -51,17 +53,33 @@ impl<'a, T: BlockIO> Iterator for FilePointer<'a, T> {
             let offset = data_sector_byte_offset
                 + ((self.cluster - root_dir_first_cluster) * bytes_per_cluster);
 
-            let data = self
+            let result = self
                 .disk
-                .read_file_block(partition_offset + offset + (sector_to_read * LOGICAL_BLOCK_SIZE))
-                .unwrap();
+                .read_file_block(partition_offset + offset + (sector_to_read * LOGICAL_BLOCK_SIZE));
+
+            if result.is_err() {
+                let e = result.err().unwrap();
+                return Some(Err(e));
+            }
+
+            let data = result.unwrap();
 
             self.sector += 1;
             if self.sector % sectors_per_cluster == 0 {
-                self.cluster = self.disk.get_next_cluster(self.cluster).unwrap();
+                let cluster_result_option = self.disk.get_next_cluster(self.cluster);
+                match cluster_result_option {
+                    None => return None,
+                    Some(cluster_result) => {
+                        if cluster_result.is_err() {
+                            let e = result.err().unwrap();
+                            return Some(Err(e));
+                        }
+                        self.cluster = cluster_result.unwrap();
+                    }
+                }
             }
 
-            Some((data, offset + (sector_to_read * LOGICAL_BLOCK_SIZE)))
+            Some(Ok((data, offset + (sector_to_read * LOGICAL_BLOCK_SIZE))))
         }
     }
 }
@@ -88,20 +106,21 @@ pub struct FileList<'a, T: BlockIO> {
 }
 
 impl<'a, T: BlockIO> Iterator for FileList<'a, T> {
-    type Item = [File; 16];
+    type Item = Result<[File; 16]>;
     fn next(&mut self) -> Option<Self::Item> {
         let next_block = self.file_pointer.next();
-        if next_block.is_none() {
-            return None;
-        } else {
-            let (data, offset) = next_block.unwrap();
-            Some(File::from_bytes(data, offset))
+        match next_block {
+            None => None,
+            Some(result) => match result {
+                Ok((data, offset)) => Some(Ok(File::from_bytes(data, offset))),
+                Err(e) => Some(Err(e)),
+            },
         }
     }
 }
 
 fn make_file_list<T: BlockIO>(disk: &mut Disk<T>) -> FileList<T> {
-    let root_dir_first_cluster = disk.bios_parameter_block.as_ref().unwrap().root_cluster;
+    let root_dir_first_cluster = disk.bios_parameter_block.unwrap().root_cluster;
     let file = File::new([0; 11], root_dir_first_cluster, MAX_FILE_SIZE);
     let file_pointer = make_file_pointer(file, disk);
     FileList { file_pointer }
@@ -129,50 +148,63 @@ impl<T: BlockIO> Disk<T> {
         self.io.write_block(byte_offset, data)
     }
 
-    fn get_next_cluster(&mut self, cluster: u64) -> Result<u64> {
+    fn get_next_cluster(&mut self, cluster: u64) -> Option<Result<u64>> {
+        if cluster >= 0x0FFFFFF8 {
+            return None;
+        }
         let partition_offset = self.partition.unwrap().byte_offset;
-        let bios_parameter_block = self.bios_parameter_block.as_ref().unwrap();
+        let bios_parameter_block = self.bios_parameter_block.unwrap();
         let offset = bios_parameter_block.fat_table_byte_offset;
         let bytes_per_sector = bios_parameter_block.bytes_per_sector;
 
         let cluster_byte_start = cluster * 4;
         let sector_num = cluster_byte_start / bytes_per_sector;
 
-        let data =
-            self.read_file_block(partition_offset + offset + (sector_num * LOGICAL_BLOCK_SIZE))?;
+        let data_result =
+            self.read_file_block(partition_offset + offset + (sector_num * LOGICAL_BLOCK_SIZE));
+
+        if data_result.is_err() {
+            let e = data_result.err().unwrap();
+            return Some(Err(e));
+        }
+
+        let data = data_result.unwrap();
 
         let start = (cluster_byte_start % LOGICAL_BLOCK_SIZE) as usize;
-        let next_cluster = u32::from_le_bytes(data[start..start + 4].try_into().unwrap());
-        Ok((next_cluster & 0x0FFFFFFF) as u64)
+        let slice_result = data[start..start + 4]
+            .try_into()
+            .map_err(|_| Error::SliceError);
+
+        if slice_result.is_err() {
+            let e = slice_result.err().unwrap();
+            return Some(Err(e));
+        }
+        let slice = slice_result.unwrap();
+
+        let next_cluster = u32::from_le_bytes(slice);
+        Some(Ok((next_cluster & 0x0FFFFFFF) as u64))
     }
 
-    fn get_files_last_cluster(&mut self, file: &File) -> u64 {
+    fn get_files_last_cluster(&mut self, file: &File) -> Result<u64> {
         let mut cluster = file.start_cluster as u64;
-        while let Ok(next_cluster) = self.get_next_cluster(cluster) {
+        while let Some(result) = self.get_next_cluster(cluster) {
+            let next_cluster = result.unwrap();
             if next_cluster >= 0x0FFFFFF8 {
                 break;
             }
             cluster = next_cluster;
         }
-        cluster
+        Ok(cluster)
     }
 
     fn write_to_last_cluster(&mut self, file: &File, data: &[u8], written: &mut u64) -> Result<()> {
         let partition_offset = self.partition.unwrap().byte_offset;
-        let bytes_per_cluster = self
-            .bios_parameter_block
-            .as_ref()
-            .unwrap()
-            .bytes_per_cluster;
-        let data_sector_bytes_offset = self
-            .bios_parameter_block
-            .as_ref()
-            .unwrap()
-            .data_sector_bytes_offset;
-        let root_dir_first_cluster = self.bios_parameter_block.as_ref().unwrap().root_cluster;
+        let bytes_per_cluster = self.bios_parameter_block.unwrap().bytes_per_cluster;
+        let data_sector_bytes_offset = self.bios_parameter_block.unwrap().data_sector_bytes_offset;
+        let root_dir_first_cluster = self.bios_parameter_block.unwrap().root_cluster;
         let file_size = file.size;
         let mut free_bytes_in_cluster = bytes_per_cluster - (file_size % bytes_per_cluster);
-        let last_cluster = self.get_files_last_cluster(file);
+        let last_cluster = self.get_files_last_cluster(file)?;
 
         let cluster_used_bytes = file_size % bytes_per_cluster;
         let mut used_sectors = cluster_used_bytes / LOGICAL_BLOCK_SIZE;
@@ -216,12 +248,8 @@ impl<T: BlockIO> Disk<T> {
 
     fn find_next_empty_fat_entry(&mut self, cluster: u64) -> ([u8; 512], u64, u64) {
         let partition_offset = self.partition.unwrap().byte_offset;
-        let fat_table_byte_offset = self
-            .bios_parameter_block
-            .as_ref()
-            .unwrap()
-            .fat_table_byte_offset;
-        let fat_sectors = self.bios_parameter_block.as_ref().unwrap().fat_size_32;
+        let fat_table_byte_offset = self.bios_parameter_block.unwrap().fat_table_byte_offset;
+        let fat_sectors = self.bios_parameter_block.unwrap().fat_size_32;
 
         let mut idx: Option<u64> = None;
         let start_sector = (cluster * 4) / LOGICAL_BLOCK_SIZE;
@@ -265,11 +293,7 @@ impl<T: BlockIO> Disk<T> {
         entry: [u8; 4],
     ) -> Result<()> {
         let partition_offset = self.partition.unwrap().byte_offset;
-        let fat_table_byte_offset = self
-            .bios_parameter_block
-            .as_ref()
-            .unwrap()
-            .fat_table_byte_offset;
+        let fat_table_byte_offset = self.bios_parameter_block.unwrap().fat_table_byte_offset;
 
         data[idx as usize] = entry[0];
         data[idx as usize + 1] = entry[1];
@@ -284,11 +308,7 @@ impl<T: BlockIO> Disk<T> {
 
     fn get_fat_block_for_cluster(&mut self, cluster: u64) -> ([u8; 512], u64, u64) {
         let partition_offset = self.partition.unwrap().byte_offset;
-        let fat_table_byte_offset = self
-            .bios_parameter_block
-            .as_ref()
-            .unwrap()
-            .fat_table_byte_offset;
+        let fat_table_byte_offset = self.bios_parameter_block.unwrap().fat_table_byte_offset;
 
         let idx = (cluster * 4) % LOGICAL_BLOCK_SIZE;
         let sector_num = (cluster * 4) / LOGICAL_BLOCK_SIZE;
@@ -350,7 +370,7 @@ impl<T: BlockIO> Disk<T> {
             self.write_to_last_cluster(file, data, &mut written)?;
             file.size = original_file_size + written;
             if written < (data.len() - 1) as u64 {
-                let last_cluster = self.get_files_last_cluster(file);
+                let last_cluster = self.get_files_last_cluster(file)?;
                 self.allocate_next_free_cluster(last_cluster)?;
             }
         }
@@ -370,7 +390,8 @@ impl<T: BlockIO> Disk<T> {
 
     fn get_root_file_size(&mut self, file: File) -> Result<u64> {
         let mut size = 0;
-        'outer: for (block, _) in make_file_pointer(file, self) {
+        'outer: for result in make_file_pointer(file, self) {
+            let (block, _) = result?;
             for pointer in block.chunks(32) {
                 if *pointer.first().unwrap() == 0u8 {
                     break 'outer;
@@ -383,33 +404,25 @@ impl<T: BlockIO> Disk<T> {
 
     fn create_file_with_name(&mut self, name: [u8; 11]) -> Result<File> {
         let start_cluster = self.allocate_first_free_cluster()?;
-        let data_sector_bytes_offset = self
-            .bios_parameter_block
-            .as_ref()
-            .unwrap()
-            .data_sector_bytes_offset;
+        let data_sector_bytes_offset = self.bios_parameter_block.unwrap().data_sector_bytes_offset;
 
         let mut file = File::new(name, start_cluster, 0);
         let file_bytes = file.to_bytes();
         let mut to_write = [0u8; 33];
         to_write[..32].copy_from_slice(&file_bytes);
 
-        let root_dir_first_cluster = self.bios_parameter_block.as_ref().unwrap().root_cluster;
+        let root_dir_first_cluster = self.bios_parameter_block.unwrap().root_cluster;
 
         let mut root_file = File::new([0; 11], root_dir_first_cluster, MAX_FILE_SIZE);
         let actual_root_file_size = self.get_root_file_size(root_file)?;
         root_file.size = actual_root_file_size;
 
-        let root_dir_last_cluster = self.get_files_last_cluster(&root_file);
+        let root_dir_last_cluster = self.get_files_last_cluster(&root_file)?;
         let root_file =
             self.append_to_file_with_update_file_size(&mut root_file, &to_write, false)?;
 
-        let root_dir_first_cluster = self.bios_parameter_block.as_ref().unwrap().root_cluster;
-        let bytes_per_cluster = self
-            .bios_parameter_block
-            .as_ref()
-            .unwrap()
-            .bytes_per_cluster;
+        let root_dir_first_cluster = self.bios_parameter_block.unwrap().root_cluster;
+        let bytes_per_cluster = self.bios_parameter_block.unwrap().bytes_per_cluster;
         let offset = data_sector_bytes_offset
             + ((root_dir_last_cluster - root_dir_first_cluster) * bytes_per_cluster);
         let byte_offset = offset + ((root_file.size - 33) % bytes_per_cluster);
@@ -417,6 +430,13 @@ impl<T: BlockIO> Disk<T> {
         file.byte_offset = byte_offset;
 
         Ok(file)
+    }
+
+    fn is_init(&mut self) -> Result<()> {
+        if self.partition.is_none() || self.bios_parameter_block.is_none() {
+            return Err(Error::NotInitalisedError);
+        }
+        Ok(())
     }
 
     pub fn init(&mut self) -> Result<()> {
@@ -429,28 +449,33 @@ impl<T: BlockIO> Disk<T> {
         let offset = self.partition.unwrap().byte_offset;
         let bios_parameter_block_data = self.read_file_block(offset)?;
         self.bios_parameter_block = Some(BiosParameterBlock::from_bytes(bios_parameter_block_data));
-        Ok(())
+
+        return self.is_init();
     }
 
-    pub fn list_root_files(&mut self) -> FileList<T> {
+    pub fn list_root_files(&mut self) -> Result<FileList<T>> {
+        self.is_init()?;
         self.reads = 0;
         self.writes = 0;
-        make_file_list(self)
+        Ok(make_file_list(self))
     }
 
-    pub fn read_file_in_chunks(&mut self, file: File) -> FilePointer<T> {
+    pub fn read_file_in_chunks(&mut self, file: File) -> Result<FilePointer<T>> {
+        self.is_init()?;
         self.reads = 0;
         self.writes = 0;
-        make_file_pointer(file, self)
+        Ok(make_file_pointer(file, self))
     }
 
     pub fn append_to_file(&mut self, file: &mut File, data: &[u8]) -> Result<File> {
+        self.is_init()?;
         self.reads = 0;
         self.writes = 0;
         self.append_to_file_with_update_file_size(file, data, true)
     }
 
     pub fn create_file(&mut self, name: [u8; 11]) -> Result<File> {
+        self.is_init()?;
         self.reads = 0;
         self.writes = 0;
         self.create_file_with_name(name)

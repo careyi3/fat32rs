@@ -3,7 +3,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use tempfile::NamedTempFile;
 
-use fat32rs::disk::{BlockIO, Disk, IOError, Result};
+use fat32rs::disk::{BlockIO, Disk, Error, Result};
 
 pub struct FileBackedDevice {
     file: NamedTempFile,
@@ -19,23 +19,21 @@ impl BlockIO for FileBackedDevice {
     fn read_block(&mut self, byte_offset: u64) -> Result<[u8; 512]> {
         self.file
             .seek(SeekFrom::Start(byte_offset))
-            .map_err(|_| IOError::ReadError)?;
+            .map_err(|_| Error::ReadError)?;
 
         let mut buf = [0u8; 512];
         self.file
             .read_exact(&mut buf)
-            .map_err(|_| IOError::ReadError)?;
+            .map_err(|_| Error::ReadError)?;
         Ok(buf)
     }
 
     fn write_block(&mut self, byte_offset: u64, data: [u8; 512]) -> Result<()> {
         self.file
             .seek(SeekFrom::Start(byte_offset))
-            .map_err(|_| IOError::WriteError)?;
-        self.file
-            .write_all(&data)
-            .map_err(|_| IOError::WriteError)?;
-        self.file.flush().map_err(|_| IOError::WriteError)?;
+            .map_err(|_| Error::WriteError)?;
+        self.file.write_all(&data).map_err(|_| Error::WriteError)?;
+        self.file.flush().map_err(|_| Error::WriteError)?;
         Ok(())
     }
 }

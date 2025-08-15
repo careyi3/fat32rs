@@ -81,10 +81,11 @@ fn it_inits() {
 fn it_lists_the_root_files() {
     let mut disk = disk();
     disk.init().unwrap();
-    let filelist = disk.list_root_files();
+    let filelist = disk.list_root_files().unwrap();
     let mut count = 0;
     let mut count_non_empty = 0;
-    for files in filelist {
+    for result in filelist {
+        let files = result.unwrap();
         for file in files {
             count += 1;
             if file.name != [0; 11] {
@@ -102,9 +103,10 @@ fn it_lists_the_root_files() {
 fn it_reads_files_in_chunks() {
     let mut disk = disk();
     disk.init().unwrap();
-    let filelist = disk.list_root_files();
+    let filelist = disk.list_root_files().unwrap();
     let mut to_read: File = File::default();
-    for files in filelist {
+    for result in filelist {
+        let files = result.unwrap();
         for file in files {
             if std::str::from_utf8(&file.name).unwrap().trim() == "LOG-1" {
                 to_read = file;
@@ -115,7 +117,8 @@ fn it_reads_files_in_chunks() {
     assert_eq!(disk.writes, 0);
 
     let mut content = String::new();
-    for chunk in disk.read_file_in_chunks(to_read) {
+    for result in disk.read_file_in_chunks(to_read).unwrap() {
+        let chunk = result.unwrap();
         content += std::str::from_utf8(&chunk.0[..(to_read.size % 512) as usize]).unwrap();
     }
     assert_eq!(disk.reads, 2);
@@ -128,9 +131,10 @@ fn it_reads_files_in_chunks() {
 fn it_reads_larger_files_in_chunks() {
     let mut disk = disk();
     disk.init().unwrap();
-    let filelist = disk.list_root_files();
+    let filelist = disk.list_root_files().unwrap();
     let mut to_read: File = File::default();
-    for files in filelist {
+    for result in filelist {
+        let files = result.unwrap();
         for file in files {
             if std::str::from_utf8(&file.name).unwrap().trim() == "LOG-2" {
                 to_read = file;
@@ -142,7 +146,8 @@ fn it_reads_larger_files_in_chunks() {
 
     let mut content = String::new();
     let mut read = 0;
-    for chunk in disk.read_file_in_chunks(to_read) {
+    for result in disk.read_file_in_chunks(to_read).unwrap() {
+        let chunk = result.unwrap();
         read += 512;
         if read > to_read.size {
             content += std::str::from_utf8(&chunk.0[..(to_read.size % 512) as usize]).unwrap();
@@ -162,9 +167,10 @@ fn it_can_append_to_file() {
     let mut disk = disk();
     disk.init().unwrap();
 
-    let filelist = disk.list_root_files();
+    let filelist = disk.list_root_files().unwrap();
     let mut to_test: File = File::default();
-    for files in filelist {
+    for result in filelist {
+        let files = result.unwrap();
         for file in files {
             if std::str::from_utf8(&file.name).unwrap().trim() == "LOG-1" {
                 to_test = file;
@@ -175,7 +181,8 @@ fn it_can_append_to_file() {
     assert_eq!(disk.writes, 0);
 
     let mut content = String::new();
-    for chunk in disk.read_file_in_chunks(to_test) {
+    for result in disk.read_file_in_chunks(to_test).unwrap() {
+        let chunk = result.unwrap();
         content += std::str::from_utf8(&chunk.0[..(to_test.size % 512) as usize]).unwrap();
     }
     assert_eq!(disk.reads, 2);
@@ -187,9 +194,10 @@ fn it_can_append_to_file() {
     assert_eq!(disk.reads, 3);
     assert_eq!(disk.writes, 2);
 
-    let filelist = disk.list_root_files();
+    let filelist = disk.list_root_files().unwrap();
     let mut to_test: File = File::default();
-    for files in filelist {
+    for result in filelist {
+        let files = result.unwrap();
         for file in files {
             if std::str::from_utf8(&file.name).unwrap().trim() == "LOG-1" {
                 to_test = file;
@@ -198,7 +206,8 @@ fn it_can_append_to_file() {
     }
 
     let mut content = String::new();
-    for chunk in disk.read_file_in_chunks(to_test) {
+    for result in disk.read_file_in_chunks(to_test).unwrap() {
+        let chunk = result.unwrap();
         content += std::str::from_utf8(&chunk.0[..(to_test.size % 512) as usize]).unwrap();
     }
     assert_eq!(disk.reads, 2);
@@ -213,9 +222,10 @@ fn it_can_append_lots_of_data_to_file() {
     let mut disk = disk();
     disk.init().unwrap();
 
-    let filelist = disk.list_root_files();
+    let filelist = disk.list_root_files().unwrap();
     let mut to_test: File = File::default();
-    for files in filelist {
+    for result in filelist {
+        let files = result.unwrap();
         for file in files {
             if std::str::from_utf8(&file.name).unwrap().trim() == "LOG-1" {
                 to_test = file;
@@ -226,7 +236,8 @@ fn it_can_append_lots_of_data_to_file() {
     assert_eq!(disk.writes, 0);
 
     let mut content = String::new();
-    for chunk in disk.read_file_in_chunks(to_test) {
+    for result in disk.read_file_in_chunks(to_test).unwrap() {
+        let chunk = result.unwrap();
         content += std::str::from_utf8(&chunk.0[..(to_test.size % 512) as usize]).unwrap();
     }
     assert_eq!(disk.reads, 2);
@@ -245,9 +256,10 @@ fn it_can_append_lots_of_data_to_file() {
     assert_eq!(disk.reads, 11);
     assert_eq!(disk.writes, 6);
 
-    let filelist = disk.list_root_files();
+    let filelist = disk.list_root_files().unwrap();
     let mut to_test: File = File::default();
-    for files in filelist {
+    for result in filelist {
+        let files = result.unwrap();
         for file in files {
             if std::str::from_utf8(&file.name).unwrap().trim() == "LOG-1" {
                 to_test = file;
@@ -257,7 +269,8 @@ fn it_can_append_lots_of_data_to_file() {
 
     let mut content = String::new();
     let mut read = 0;
-    for chunk in disk.read_file_in_chunks(to_test) {
+    for result in disk.read_file_in_chunks(to_test).unwrap() {
+        let chunk = result.unwrap();
         read += 512;
         if read > to_test.size {
             content += std::str::from_utf8(&chunk.0[..(to_test.size % 512) as usize]).unwrap();
@@ -282,9 +295,10 @@ fn it_can_create_a_new_file() {
 
     disk.create_file(name).unwrap();
 
-    let filelist = disk.list_root_files();
+    let filelist = disk.list_root_files().unwrap();
     let mut to_test: File = File::default();
-    for files in filelist {
+    for result in filelist {
+        let files = result.unwrap();
         for file in files {
             if std::str::from_utf8(&file.name).is_ok()
                 && std::str::from_utf8(&file.name).unwrap().trim() == "new file"
