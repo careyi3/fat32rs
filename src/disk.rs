@@ -27,12 +27,11 @@ pub struct Disk<T: BlockIO> {
     pub writes: u32,
 }
 
-pub struct FilePointer<'a, T: BlockIO> {
-    pub file: File,
-    pub cluster: u64,
-    pub sector: u64,
-    pub sector_count: u64,
-    pub disk: &'a mut Disk<T>,
+struct FilePointer<'a, T: BlockIO> {
+    cluster: u64,
+    sector: u64,
+    sector_count: u64,
+    disk: &'a mut Disk<T>,
 }
 
 impl<'a, T: BlockIO> Iterator for FilePointer<'a, T> {
@@ -93,7 +92,6 @@ fn make_file_pointer<T: BlockIO>(file: File, disk: &mut Disk<T>) -> FilePointer<
     }
 
     FilePointer {
-        file,
         cluster,
         sector: 0,
         sector_count,
@@ -101,8 +99,49 @@ fn make_file_pointer<T: BlockIO>(file: File, disk: &mut Disk<T>) -> FilePointer<
     }
 }
 
-pub struct FileList<'a, T: BlockIO> {
-    pub file_pointer: FilePointer<'a, T>,
+pub struct FileContent<'a, T: BlockIO> {
+    idx: usize,
+    file_size: u64,
+    bytes: Option<[u8; 512]>,
+    file_pointer: FilePointer<'a, T>,
+}
+
+impl<'a, T: BlockIO> Iterator for FileContent<'a, T> {
+    type Item = Result<u8>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx == self.file_size as usize {
+            return None;
+        } else {
+            if self.idx % 512 == 0 {
+                let option_result = self.file_pointer.next();
+                match option_result {
+                    None => return None,
+                    Some(result) => match result {
+                        Err(e) => return Some(Err(e)),
+                        Ok(files) => self.bytes = Some(files.0),
+                    },
+                }
+            }
+            let byte = self.bytes.unwrap()[self.idx % 512];
+            self.idx += 1;
+
+            return Some(Ok(byte));
+        }
+    }
+}
+
+fn make_file_content<T: BlockIO>(file: File, disk: &mut Disk<T>) -> FileContent<T> {
+    let file_pointer = make_file_pointer(file, disk);
+    FileContent {
+        idx: 0,
+        file_size: file.size,
+        bytes: None,
+        file_pointer,
+    }
+}
+
+struct FileList<'a, T: BlockIO> {
+    file_pointer: FilePointer<'a, T>,
 }
 
 impl<'a, T: BlockIO> Iterator for FileList<'a, T> {
@@ -124,6 +163,50 @@ fn make_file_list<T: BlockIO>(disk: &mut Disk<T>) -> FileList<T> {
     let file = File::new([0; 11], root_dir_first_cluster, MAX_FILE_SIZE);
     let file_pointer = make_file_pointer(file, disk);
     FileList { file_pointer }
+}
+
+pub struct Files<'a, T: BlockIO> {
+    idx: usize,
+    files: Option<[File; 16]>,
+    file_list: FileList<'a, T>,
+}
+
+impl<'a, T: BlockIO> Iterator for Files<'a, T> {
+    type Item = Result<File>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut next_file = File::default();
+        while next_file.attributes != 32 && next_file.is_lfn == false {
+            if self.idx % 16 == 0 {
+                let option_result = self.file_list.next();
+                match option_result {
+                    None => return None,
+                    Some(result) => match result {
+                        Err(e) => return Some(Err(e)),
+                        Ok(files) => self.files = Some(files),
+                    },
+                }
+            }
+            for i in (self.idx % 16)..16 {
+                let file = self.files.unwrap()[i];
+                if !file.is_lfn && file.attributes == 32 {
+                    next_file = file;
+                    self.idx += 1;
+                    break;
+                }
+                self.idx += 1;
+            }
+        }
+        Some(Ok(next_file))
+    }
+}
+
+fn make_files<T: BlockIO>(disk: &mut Disk<T>) -> Files<T> {
+    let file_list = make_file_list(disk);
+    Files {
+        idx: 0,
+        files: None,
+        file_list,
+    }
 }
 
 impl<T: BlockIO> Disk<T> {
@@ -453,18 +536,18 @@ impl<T: BlockIO> Disk<T> {
         return self.is_init();
     }
 
-    pub fn list_root_files(&mut self) -> Result<FileList<T>> {
+    pub fn list_root_files(&mut self) -> Result<Files<T>> {
         self.is_init()?;
         self.reads = 0;
         self.writes = 0;
-        Ok(make_file_list(self))
+        Ok(make_files(self))
     }
 
-    pub fn read_file_in_chunks(&mut self, file: File) -> Result<FilePointer<T>> {
+    pub fn read_file(&mut self, file: File) -> Result<FileContent<T>> {
         self.is_init()?;
         self.reads = 0;
         self.writes = 0;
-        Ok(make_file_pointer(file, self))
+        Ok(make_file_content(file, self))
     }
 
     pub fn append_to_file(&mut self, file: &mut File, data: &[u8]) -> Result<File> {
@@ -479,6 +562,35 @@ impl<T: BlockIO> Disk<T> {
         self.reads = 0;
         self.writes = 0;
         self.create_file_with_name(name)
+    }
+
+    pub fn get_root_file_by_name(&mut self, name: [u8; 11]) -> Option<Result<File>> {
+        let init_result = self.is_init();
+        if init_result.is_err() {
+            let e = init_result.err().unwrap();
+            return Some(Err(e));
+        }
+        self.reads = 0;
+        self.writes = 0;
+
+        let files_result = self.list_root_files();
+        if files_result.is_err() {
+            let e = files_result.err().unwrap();
+            return Some(Err(e));
+        }
+
+        for file_result in files_result.unwrap() {
+            if file_result.is_err() {
+                let e = file_result.err().unwrap();
+                return Some(Err(e));
+            }
+
+            let file = file_result.unwrap();
+            if file.name == name {
+                return Some(Ok(file));
+            }
+        }
+        None
     }
 }
 

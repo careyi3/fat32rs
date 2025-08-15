@@ -17,10 +17,11 @@ The only features implemented are:
 - List the files in the root directory of the drive
 - Append to a file on the drive
 - Create a new file in the root directory of the drive
+- Get a root directory file by name
 
 ## Setup
 
-TODO
+All you should need is a working dev environment for Rust with Cargo installed. [You can find instructions here](https://www.rust-lang.org/tools/install).
 
 ## Running
 
