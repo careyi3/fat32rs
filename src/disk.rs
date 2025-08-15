@@ -5,12 +5,13 @@ pub type Result<T> = core::result::Result<T, Error>;
 const LOGICAL_BLOCK_SIZE: u64 = 512;
 const MAX_FILE_SIZE: u64 = 4294967296;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Error {
     ReadError,
     WriteError,
     SliceError,
     NotInitalisedError,
+    DiskFullError,
 }
 
 pub trait BlockIO {
@@ -285,6 +286,7 @@ impl<T: BlockIO> Disk<T> {
         let bytes_per_cluster = self.bios_parameter_block.unwrap().bytes_per_cluster;
         let data_sector_bytes_offset = self.bios_parameter_block.unwrap().data_sector_bytes_offset;
         let root_dir_first_cluster = self.bios_parameter_block.unwrap().root_cluster;
+        let sectors_per_cluster = self.bios_parameter_block.unwrap().sectors_per_cluster;
         let file_size = file.size;
         let mut free_bytes_in_cluster = bytes_per_cluster - (file_size % bytes_per_cluster);
         let last_cluster = self.get_files_last_cluster(file)?;
@@ -319,6 +321,9 @@ impl<T: BlockIO> Disk<T> {
                     partition_offset + offset + (used_sectors * LOGICAL_BLOCK_SIZE),
                 )?;
             }
+            if used_sectors == sectors_per_cluster {
+                return Ok(());
+            }
         }
 
         self.write_file_block(
@@ -329,7 +334,7 @@ impl<T: BlockIO> Disk<T> {
         Ok(())
     }
 
-    fn find_next_empty_fat_entry(&mut self, cluster: u64) -> ([u8; 512], u64, u64) {
+    fn find_next_empty_fat_entry(&mut self, cluster: u64) -> Result<([u8; 512], u64, u64)> {
         let partition_offset = self.partition.unwrap().byte_offset;
         let fat_table_byte_offset = self.bios_parameter_block.unwrap().fat_table_byte_offset;
         let fat_sectors = self.bios_parameter_block.unwrap().fat_size_32;
@@ -341,11 +346,9 @@ impl<T: BlockIO> Disk<T> {
         let mut start_id = (cluster * 4) % LOGICAL_BLOCK_SIZE;
 
         'outer: while idx.is_none() {
-            data = self
-                .read_file_block(
-                    partition_offset + fat_table_byte_offset + (sector_num * LOGICAL_BLOCK_SIZE),
-                )
-                .unwrap();
+            data = self.read_file_block(
+                partition_offset + fat_table_byte_offset + (sector_num * LOGICAL_BLOCK_SIZE),
+            )?;
             for i in (start_id as usize..data.len()).step_by(4) {
                 let start_lba_arr: [u8; 4] = data[i..i + 4].try_into().unwrap();
                 let content: u64 = u32::from_le_bytes(start_lba_arr) as u64 & 0x0FFFFFFF;
@@ -353,19 +356,18 @@ impl<T: BlockIO> Disk<T> {
                     idx = Some(i as u64);
                     break 'outer;
                 }
-                start_id = 0;
-                sector_num += 1;
-                if sector_num == fat_sectors {
-                    sector_num = 0;
-                }
-                if start_sector == sector_num {
-                    //TODO: Handle this properly
-                    panic!("Can't allocate any more memory")
-                }
+            }
+            start_id = 0;
+            sector_num += 1;
+            if sector_num == fat_sectors {
+                sector_num = 0;
+            }
+            if start_sector == sector_num {
+                return Err(Error::DiskFullError);
             }
         }
 
-        return (data, sector_num, idx.unwrap());
+        return Ok((data, sector_num, idx.unwrap()));
     }
 
     fn write_fat_entry(
@@ -406,7 +408,7 @@ impl<T: BlockIO> Disk<T> {
     }
 
     fn allocate_next_free_cluster(&mut self, last_cluster: u64) -> Result<()> {
-        let (data, sector_num, idx) = self.find_next_empty_fat_entry(last_cluster);
+        let (data, sector_num, idx) = self.find_next_empty_fat_entry(last_cluster)?;
         let entry: [u8; 4] = ((0x0FFFFFF8 & 0x0FFFFFFF) as u32).to_le_bytes();
         self.write_fat_entry(data, sector_num, idx, entry)?;
 
@@ -449,10 +451,10 @@ impl<T: BlockIO> Disk<T> {
     ) -> Result<File> {
         let original_file_size = file.size;
         let mut written: u64 = 0;
-        while written < (data.len() - 1) as u64 {
+        while written < data.len() as u64 {
             self.write_to_last_cluster(file, data, &mut written)?;
             file.size = original_file_size + written;
-            if written < (data.len() - 1) as u64 {
+            if written < data.len() as u64 {
                 let last_cluster = self.get_files_last_cluster(file)?;
                 self.allocate_next_free_cluster(last_cluster)?;
             }
@@ -465,7 +467,7 @@ impl<T: BlockIO> Disk<T> {
     }
 
     fn allocate_first_free_cluster(&mut self) -> Result<u64> {
-        let (data, sector_num, idx) = self.find_next_empty_fat_entry(2);
+        let (data, sector_num, idx) = self.find_next_empty_fat_entry(2)?;
         let entry: [u8; 4] = ((0x0FFFFFF8 & 0x0FFFFFFF) as u32).to_le_bytes();
         self.write_fat_entry(data, sector_num, idx, entry)?;
         Ok(((sector_num * LOGICAL_BLOCK_SIZE) + idx) / 4)
@@ -476,7 +478,7 @@ impl<T: BlockIO> Disk<T> {
         'outer: for result in make_file_pointer(file, self) {
             let (block, _) = result?;
             for pointer in block.chunks(32) {
-                if *pointer.first().unwrap() == 0u8 {
+                if *pointer.first().unwrap() == 0x00 {
                     break 'outer;
                 }
                 size += 32;

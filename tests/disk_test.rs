@@ -1,8 +1,8 @@
 mod test_helpers;
 
-use test_helpers::disk;
+use test_helpers::{disk, pad_or_truncate_to_11_bytes};
 
-use fat32rs::disk::Result;
+use fat32rs::disk::{Error, Result};
 
 #[test]
 fn it_inits() -> Result<()> {
@@ -165,7 +165,7 @@ fn it_can_append_to_file() -> Result<()> {
 
     assert_eq!(content, "log line 1\n");
 
-    disk.append_to_file(&mut to_test, b"new data").unwrap();
+    disk.append_to_file(&mut to_test, b"new data")?;
     assert_eq!(disk.reads, 3);
     assert_eq!(disk.writes, 2);
 
@@ -212,9 +212,9 @@ fn it_can_append_lots_of_data_to_file() -> Result<()> {
     }
     let expected_appended_data = String::from_utf8(random_data.clone()).unwrap();
 
-    disk.append_to_file(&mut to_test, &random_data).unwrap();
+    disk.append_to_file(&mut to_test, &random_data)?;
     assert_eq!(disk.reads, 11);
-    assert_eq!(disk.writes, 6);
+    assert_eq!(disk.writes, 5);
 
     let to_test = disk
         .get_root_file_by_name(pad_or_truncate_to_11_bytes("LOG-1"))
@@ -253,10 +253,121 @@ fn it_can_create_a_new_file() -> Result<()> {
     Ok(())
 }
 
-fn pad_or_truncate_to_11_bytes(input: &str) -> [u8; 11] {
-    let mut result = [b' '; 11];
-    let bytes = input.as_bytes();
-    let len = core::cmp::min(bytes.len(), 8);
-    result[..len].copy_from_slice(&bytes[..len]);
-    result
+#[test]
+fn it_can_append_to_newly_created_files() -> Result<()> {
+    let mut disk = disk();
+    disk.init()?;
+
+    let name = pad_or_truncate_to_11_bytes("new file");
+
+    disk.create_file(name)?;
+
+    let mut to_test = disk
+        .get_root_file_by_name(pad_or_truncate_to_11_bytes("new file"))
+        .unwrap()?;
+
+    assert_eq!(
+        std::str::from_utf8(&to_test.name).unwrap().trim(),
+        "new file"
+    );
+
+    disk.append_to_file(&mut to_test, b"new data")?;
+
+    let mut content = String::new();
+    for byte in disk.read_file(to_test)? {
+        content.push(byte? as char);
+    }
+    assert_eq!(disk.reads, 2);
+    assert_eq!(disk.writes, 0);
+
+    assert_eq!(content, "new data");
+
+    Ok(())
+}
+
+#[test]
+fn it_can_create_many_files() -> Result<()> {
+    let mut disk = disk();
+    disk.init()?;
+
+    for i in 0..100 {
+        let name = pad_or_truncate_to_11_bytes(format!("test-{}", i).as_str());
+
+        disk.create_file(name)?;
+    }
+
+    let mut count = 0;
+    for _ in disk.list_root_files()? {
+        count += 1;
+    }
+
+    assert_eq!(count, 102);
+
+    Ok(())
+}
+
+#[test]
+fn it_can_create_and_write_lots_of_data() -> Result<()> {
+    let mut disk = disk();
+    disk.init()?;
+
+    for i in 0..50 {
+        let name = pad_or_truncate_to_11_bytes(format!("test-{}", i).as_str());
+        let mut file = disk.create_file(name)?;
+        let mut random_data = Vec::with_capacity(6500);
+        for i in 0..6500 {
+            let ascii_char = (32 + (i % 95)) as u8;
+            random_data.push(ascii_char);
+        }
+
+        for _ in 0..10 {
+            disk.append_to_file(&mut file, &random_data)?;
+        }
+    }
+
+    let mut count = 0;
+    let mut size = 0;
+    for file in disk.list_root_files()? {
+        size += file?.size;
+        count += 1;
+    }
+
+    assert_eq!(count, 52);
+    assert_eq!(size, 3302128);
+
+    Ok(())
+}
+
+#[test]
+fn it_errors_when_the_disk_is_full() -> Result<()> {
+    let mut disk = disk();
+    disk.init()?;
+
+    for i in 0..5000 {
+        let name = pad_or_truncate_to_11_bytes(format!("test-{}", i).as_str());
+        let file_result = disk.create_file(name);
+
+        if file_result.is_err() {
+            assert_eq!(file_result.err().unwrap(), Error::DiskFullError);
+            return Ok(());
+        }
+
+        let mut file = file_result?;
+
+        let mut random_data = Vec::with_capacity(6500);
+        for i in 0..6500 {
+            let ascii_char = (32 + (i % 95)) as u8;
+            random_data.push(ascii_char);
+        }
+
+        for _ in 0..10 {
+            let file_result = disk.append_to_file(&mut file, &random_data);
+            if file_result.is_err() {
+                assert_eq!(file_result.err().unwrap(), Error::DiskFullError);
+                return Ok(());
+            }
+        }
+    }
+
+    Ok(())
 }

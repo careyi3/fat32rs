@@ -61,3 +61,11 @@ pub fn disk() -> Disk<FileBackedDevice> {
     let disk = Disk::new(device);
     return disk;
 }
+
+pub fn pad_or_truncate_to_11_bytes(input: &str) -> [u8; 11] {
+    let mut result = [b' '; 11];
+    let bytes = input.as_bytes();
+    let len = core::cmp::min(bytes.len(), 8);
+    result[..len].copy_from_slice(&bytes[..len]);
+    result
+}

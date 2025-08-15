@@ -6,8 +6,8 @@ use test_helpers::disk;
 
 fn main() -> Result<()> {
     let mut disk = disk();
+    disk.init()?;
 
-    disk.init().unwrap();
     let mut to_read = vec![];
     let files = disk.list_root_files().unwrap();
     for result in files {
