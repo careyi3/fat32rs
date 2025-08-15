@@ -1,6 +1,6 @@
 # fat32rs
 
-WIP Minimal FAT32 Client written in #[no_std] Rust
+Minimal FAT32 Client written in #[no_std] Rust
 
 This is library was designed to operate within some specific constraints imposed by running in an embedded systems environment.
 
@@ -32,10 +32,10 @@ $ cargo run --example print_files
  
 ```
 
-Note: If you want to read from your own physical drive, you can pass the `--path=<your_drives_path>` argument which will run against your physical drive.
+Note: If you want to read from your own physical drive, you can pass an argument like `/dev/diskn` which will run against your physical drive.
 
 ```bash
-$ cargo run --example print_files --path=/dev/disk4
+$ cargo run --example print_files /dev/disk4
  
 ```
 

@@ -1,8 +1,8 @@
-#[path = "../tests/test_helpers.rs"]
-mod test_helpers;
+#[path = "common/mod.rs"]
+mod common;
 
+use common::{disk, pad_or_truncate_to_11_bytes};
 use fat32rs::disk::Result;
-use test_helpers::{disk, pad_or_truncate_to_11_bytes};
 
 fn main() -> Result<()> {
     let mut disk = disk();
