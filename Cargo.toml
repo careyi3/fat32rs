@@ -1,7 +1,14 @@
 [package]
 name = "fat32rs"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
+license = "MIT"
+description = "Minimal FAT32 client written in #[no_std] Rust."
+homepage = "https://github.com/careyi3/fat32rs"
+repository = "https://github.com/careyi3/fat32rs"
+readme = "README.md"
+keywords = ["fat32", "embedded", "no_std", "filesystem"]
+categories = ["embedded", "filesystem"]
 
 [profile.release]
 opt-level = 3
@@ -9,6 +16,18 @@ opt-level = 3
 [lib]
 name = "fat32rs"
 path = "src/lib.rs"
+
+[[example]]
+name = "append_to_file"
+path = "examples/append_to_file.rs"
+
+[[example]]
+name = "create_file"
+path = "examples/create_file.rs"
+
+[[example]]
+name = "load_test"
+path = "examples/load_test.rs"
 
 [[example]]
 name = "read_files"
