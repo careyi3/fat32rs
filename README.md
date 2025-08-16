@@ -6,9 +6,15 @@ This is library was designed to operate within some specific constraints imposed
 
 Based on this original Python prototype: [fat32py](https://github.com/careyi3/fat32py)
 
+You can find the [crate.io listing here](https://crates.io/crates/fat32rs).
+
+This library was originally designed with the [STM32 HAL library](https://github.com/stm32-rs/stm32f4xx-hal) in mind, speccifically to work with the SDIO SDCard abstraction it implements. A stand alone example of it's usage as an [SDCard data logger can be found here](https://github.com/careyi3/sd_card_logger).
+
 **The following instructions assumes a Linux or Mac environment*
 
 ![Test](https://github.com/careyi3/fat32rs/actions/workflows/test.yml/badge.svg)
+[![Crates.io](https://img.shields.io/crates/v/fat32rs.svg)](https://crates.io/crates/fat32rs)
+[![Crates.io](https://img.shields.io/crates/d/fat32rs.svg)](https://crates.io/crates/fat32rs)
 
 ## Features
 
